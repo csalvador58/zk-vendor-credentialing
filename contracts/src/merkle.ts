@@ -4,16 +4,12 @@ import {
   Poseidon,
   Field,
   Permissions,
-  DeployArgs,
   State,
   state,
   CircuitValue,
-  PublicKey,
-  UInt64,
   prop,
   Mina,
   method,
-  UInt32,
   PrivateKey,
   AccountUpdate,
   MerkleTree,
@@ -63,16 +59,25 @@ class VendorCredential extends SmartContract {
   @method
   verifyCredential(credentialData: Record, path: MyMerkleWitness) {
     // gets the current root of the tree
-    const root = Tree.getRoot();
+    // const root = Tree.getRoot();
+    // fetch the on-chain commitment
+    let commitment = this.commitment.get();
+    this.commitment.assertEquals(commitment);
 
     // calculates the root of the witness
     let credentialDataHash = credentialData.hash();
     const calculatedRoot = path.calculateRoot(credentialDataHash);
 
-    calculatedRoot.assertEquals(root);
+    // Confirm the credential is committed to the Merkle Tree
+    calculatedRoot.assertEquals(commitment);
   }
 }
 
+// Example field of Vendor Credentialing data
+// - Address
+// - Social Security Number
+// - Vendor Credential e.g. immunization records
+// - Vendor Credential e.g. background check
 type VendorData = 'Address' | 'SSN' | 'VC01' | 'VC02';
 
 let Local = Mina.LocalBlockchain({ proofsEnabled: doProofs });
@@ -82,30 +87,24 @@ let initialBalance = 10_000_000_000;
 let feePayerKey = Local.testAccounts[0].privateKey;
 let feePayer = Local.testAccounts[0].publicKey;
 
-// the zkapp record
-let zkappKey = PrivateKey.fromBase58(
-  'EKEcnhmtY6ehzn6jwFVXSjcibzPrWjrHSfQVMgYFuDhhdyampDdX'
-);
-console.log('zkappKey:');
-console.log(zkappKey.toBase58());
-let zkappAddress = zkappKey.toPublicKey();
-
 // *****************************************************************
-// this map serves as our off-chain in-memory storage
+
+// The following Map serves as an off-chain in-memory storage
 let Records: Map<string, Record> = new Map<VendorData, Record>();
 
+// Create example credential records
 let address = new Record(CircuitString.fromString('1234 Main St'));
 let ssn = new Record(CircuitString.fromString('999775555'));
-let vc01 = new Record(CircuitString.fromString('MedicalRecord01'));
-let vc02 = new Record(CircuitString.fromString('MedicalRecord02'));
+let vc01 = new Record(CircuitString.fromString('Private immunizations'));
+let vc02 = new Record(CircuitString.fromString('Background check details'));
 
 Records.set('Address', address);
 Records.set('SSN', ssn);
 Records.set('VC01', vc01);
 Records.set('VC02', vc02);
 
-// we now need "wrap" the Merkle tree around our off-chain storage
-// we initialize a new Merkle Tree with height 8
+// "wrap" the Merkle tree around our off-chain storage
+// initialize a new Merkle Tree with height 8
 const Tree = new MerkleTree(8);
 
 Tree.setLeaf(0n, address.hash());
@@ -113,16 +112,25 @@ Tree.setLeaf(1n, ssn.hash());
 Tree.setLeaf(2n, vc01.hash());
 Tree.setLeaf(3n, vc02.hash());
 
-// Set up set of records, generate a commitment before deploying our contract!
+// Generate a commitment before deploying our contract
 initialCommitment = Tree.getRoot();
 
-console.log('initialCommitment root:');
+console.log('Initial Commitment:');
 console.log(initialCommitment.toString());
 
 // ***********************************************************
 
+// Deploy smart contract
+console.log('Deploying Vendor Credential smart contract..');
+
+// the zkapp record
+console.log('Generating a public key to deploy smart contract...');
+let zkappKey = PrivateKey.random();
+console.log('zkappKey:');
+console.log(zkappKey.toBase58());
+let zkappAddress = zkappKey.toPublicKey();
+
 let VendorCredentialZkApp = new VendorCredential(zkappAddress);
-console.log('Deploying VendorCredential..');
 if (doProofs) {
   await VendorCredential.compile();
 }
@@ -135,53 +143,54 @@ let tx = await Mina.transaction(feePayer, () => {
 });
 await tx.sign([feePayerKey, zkappKey]).send();
 
-console.log('Verifier checking a credential..');
 console.log('VendorCredentialZkApp.commitment.get()');
 console.log(VendorCredentialZkApp.commitment.get().toString());
 
 let verifyAddress = new Record(CircuitString.fromString('1234 Main St'));
 let verifySSN = new Record(CircuitString.fromString('999775555'));
-let verifyVC01 = new Record(CircuitString.fromString('MedicalRecord01'));
-let verifyVC02 = new Record(CircuitString.fromString('MedicalRecord02'));
+let verifyVC01 = new Record(CircuitString.fromString('Private immunizations'));
+let verifyVC02 = new Record(
+  CircuitString.fromString('Background check details')
+);
 
 // Request to verify Address...
 console.log('Request to verify address');
 await verifierRequest(0n, verifyAddress);
 // Request to verify SSN...
-console.log('Request to verify ssn');
+console.log('Request to verify SSN');
 await verifierRequest(1n, verifySSN);
 // Request to verify VC01...
-console.log('Request to verify vc01');
+console.log('Request to verify vendor data 01');
 await verifierRequest(2n, verifyVC01);
 // Request to verify VC02...
-console.log('Request to verify vc02');
+console.log('Request to verify vendor data 02');
 await verifierRequest(3n, verifyVC02);
 
-// Request to verify Address (with incorrect data)...
+// Testing a request to verify Address (with incorrect data)...
 console.log(
-  'Request to verify address with incorrect data. Credential verification should fail.'
+  'Testing a request to verify address with incorrect data. Credential verification should fail.'
 );
+// The correct address should be 1234 Main St.
 let verifyAddressFailTest = new Record(
   CircuitString.fromString('5678 Main St')
 );
+
 await verifierRequest(0n, verifyAddressFailTest);
 
-async function verifierRequest(
-  //   key: VendorData,
-  index: bigint,
-  credentialData: Record
-) {
-  //   let record = Records.get(key)!;
+async function verifierRequest(index: bigint, credentialData: Record) {
+  // Generate witness for leaf at an index
   let w = Tree.getWitness(index);
+  // Create a circuit-compatible witness
   let witness = new MyMerkleWitness(w);
 
   console.log('Verifier request in process...');
   try {
+    // Create transaction to
     let tx = await Mina.transaction(feePayer, () => {
       VendorCredentialZkApp.verifyCredential(credentialData, witness);
     });
-    await tx.prove();
-    await tx.sign([feePayerKey, zkappKey]).send();
+    // await tx.prove();
+    // await tx.sign([feePayerKey, zkappKey]).send();
 
     console.log('Credentials verified!');
   } catch (ex: any) {
