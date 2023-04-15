@@ -35,6 +35,10 @@ class Record extends CircuitValue {
   hash(): Field {
     return Poseidon.hash(this.toFields());
   }
+
+  updateCredential(data: CircuitString): Record {
+    return new Record(this.status.append(data));
+  }
 }
 
 // initiate tree root in order to tell the contract about our off-chain storage
@@ -58,9 +62,7 @@ class VendorCredential extends SmartContract {
 
   @method
   verifyCredential(credentialData: Record, path: MyMerkleWitness) {
-    // gets the current root of the tree
-    // const root = Tree.getRoot();
-    // fetch the on-chain commitment
+    // get the current root of the tree
     let commitment = this.commitment.get();
     this.commitment.assertEquals(commitment);
 
@@ -70,6 +72,24 @@ class VendorCredential extends SmartContract {
 
     // Confirm the credential is committed to the Merkle Tree
     calculatedRoot.assertEquals(commitment);
+  }
+
+  @method
+  updateRecord(record: Record, data: CircuitString, path: MyMerkleWitness) {
+    // we fetch the on-chain commitment
+    let commitment = this.commitment.get();
+    this.commitment.assertEquals(commitment);
+
+    // we check that the account is within the committed Merkle Tree
+    path.calculateRoot(record.hash()).assertEquals(commitment);
+
+    // Update record
+    let newRecord = record.updateCredential(data);
+
+    // Calculate the new Merkle Root, based on the record changes
+    let newCommitment = path.calculateRoot(newRecord.hash());
+
+    this.commitment.set(newCommitment);
   }
 }
 
@@ -95,8 +115,10 @@ let Records: Map<string, Record> = new Map<VendorData, Record>();
 // Create example credential records
 let address = new Record(CircuitString.fromString('1234 Main St'));
 let ssn = new Record(CircuitString.fromString('999775555'));
-let vc01 = new Record(CircuitString.fromString('Private immunizations'));
-let vc02 = new Record(CircuitString.fromString('Background check details'));
+let vc01 = new Record(
+  CircuitString.fromString('Covid-19 Vaccine - Not completed')
+);
+let vc02 = new Record(CircuitString.fromString('Other Private immunizations'));
 
 Records.set('Address', address);
 Records.set('SSN', ssn);
@@ -115,20 +137,20 @@ Tree.setLeaf(3n, vc02.hash());
 // Generate a commitment before deploying our contract
 initialCommitment = Tree.getRoot();
 
-console.log('Initial Commitment:');
+console.log('Initial Commitment check:');
 console.log(initialCommitment.toString());
 
 // ***********************************************************
 
-// Deploy smart contract
-console.log('Deploying Vendor Credential smart contract..');
-
 // the zkapp record
-console.log('Generating a public key to deploy smart contract...');
+console.log('\nGenerating a public key to deploy smart contract...');
 let zkappKey = PrivateKey.random();
-console.log('zkappKey:');
+console.log('\nzkappKey:');
 console.log(zkappKey.toBase58());
 let zkappAddress = zkappKey.toPublicKey();
+
+// Deploy smart contract
+console.log('\nDeploying Vendor Credential smart contract..');
 
 let VendorCredentialZkApp = new VendorCredential(zkappAddress);
 if (doProofs) {
@@ -143,39 +165,61 @@ let tx = await Mina.transaction(feePayer, () => {
 });
 await tx.sign([feePayerKey, zkappKey]).send();
 
-console.log('VendorCredentialZkApp.commitment.get()');
+console.log('\nCommitment check via - VendorCredentialZkApp.commitment.get()');
 console.log(VendorCredentialZkApp.commitment.get().toString());
 
 let verifyAddress = new Record(CircuitString.fromString('1234 Main St'));
 let verifySSN = new Record(CircuitString.fromString('999775555'));
-let verifyVC01 = new Record(CircuitString.fromString('Private immunizations'));
+let verifyVC01 = new Record(
+  CircuitString.fromString('Covid-19 Vaccine - Not completed')
+);
 let verifyVC02 = new Record(
-  CircuitString.fromString('Background check details')
+  CircuitString.fromString('Other Private immunizations')
 );
 
 // Request to verify Address...
-console.log('Request to verify address');
+console.log('\nRequest to verify address');
 await verifierRequest(0n, verifyAddress);
 // Request to verify SSN...
-console.log('Request to verify SSN');
+console.log('\nRequest to verify SSN');
 await verifierRequest(1n, verifySSN);
+
+console.log('\nCommitment check via - VendorCredentialZkApp.commitment.get()');
+console.log(VendorCredentialZkApp.commitment.get().toString());
+
 // Request to verify VC01...
-console.log('Request to verify vendor data 01');
+console.log('\nRequest to verify vendor data 01');
 await verifierRequest(2n, verifyVC01);
 // Request to verify VC02...
-console.log('Request to verify vendor data 02');
+console.log('\nRequest to verify vendor data 02');
 await verifierRequest(3n, verifyVC02);
 
 // Testing a request to verify Address (with incorrect data)...
 console.log(
-  'Testing a request to verify address with incorrect data. Credential verification should fail.'
+  '\nTesting a request to verify address with incorrect data. Credential verification should fail.'
 );
 // The correct address should be 1234 Main St.
 let verifyAddressFailTest = new Record(
   CircuitString.fromString('5678 Main St')
 );
-
 await verifierRequest(0n, verifyAddressFailTest);
+
+// Updating a record
+console.log('\nUpdating a record - Covid-19 Vaccine - Completed');
+let updateCircuitString = CircuitString.fromString('Revised to Completed');
+await updateRequest('VC01', updateCircuitString, 2n);
+
+console.log('\nCommitment check via - VendorCredentialZkApp.commitment.get()');
+console.log(VendorCredentialZkApp.commitment.get().toString());
+
+// Verify record changed
+console.log('\nRequest to verify vendor data 01 after update');
+let verifyVC01Updated = new Record(
+  CircuitString.fromString('Covid-19 Vaccine - Not completed').append(
+    CircuitString.fromString('Revised to Completed')
+  )
+);
+await verifierRequest(2n, verifyVC01Updated);
 
 async function verifierRequest(index: bigint, credentialData: Record) {
   // Generate witness for leaf at an index
@@ -189,14 +233,46 @@ async function verifierRequest(index: bigint, credentialData: Record) {
     let tx = await Mina.transaction(feePayer, () => {
       VendorCredentialZkApp.verifyCredential(credentialData, witness);
     });
-    // await tx.prove();
-    // await tx.sign([feePayerKey, zkappKey]).send();
+    await tx.prove();
+    await tx.sign([feePayerKey, zkappKey]).send();
 
     console.log('Credentials verified!');
   } catch (ex: any) {
     console.log(
       'Vendor credential does not match. Credentials are not verified'
     );
+  }
+}
+
+async function updateRequest(
+  data: VendorData,
+  updateCircuitString: CircuitString,
+  index: bigint
+) {
+  let record = Records.get(data)!;
+  // Generate witness for leaf at an index
+  let w = Tree.getWitness(index);
+  // Create a circuit-compatible witness
+  let witness = new MyMerkleWitness(w);
+
+  console.log('Record update request in process...');
+  try {
+    let tx = await Mina.transaction(feePayer, () => {
+      VendorCredentialZkApp.updateRecord(record, updateCircuitString, witness);
+    });
+    await tx.prove();
+    await tx.sign([feePayerKey, zkappKey]).send();
+
+    console.log('Update to record completed.');
+
+    // if the transaction was successful, we can update our off-chain storage
+    record.status = record.status.append(updateCircuitString);
+    Tree.setLeaf(index, updateCircuitString.hash());
+    VendorCredentialZkApp.commitment.get().assertEquals(Tree.getRoot());
+  } catch (ex: any) {
+    // console.log('error: ');
+    // console.log(ex);
+    console.log('Update to record failed.');
   }
 }
 
