@@ -137,7 +137,17 @@ Tree.setLeaf(3n, vc02.hash());
 // Generate a commitment before deploying our contract
 initialCommitment = Tree.getRoot();
 
-console.log('Initial Commitment check:');
+console.log('***ZK Vendor Credentialing DEMO***');
+console.log('\n\n\nOff-chain Merkle Tree map and initial commitment created.');
+console.log(`
+Merkle Tree leaves contained the following example data. Each data point will be verified, followed by an update in a record.
+- Address: '1234 Main St'
+- SSN: '999775555'
+- Vender Credential Data 01: 'Covid-19 Vaccine - Not completed'
+- Vender Credential Data 02: 'Other Private immunizations'
+`);
+
+console.log('\n\nInitial Commitment check:');
 console.log(initialCommitment.toString());
 
 // ***********************************************************
@@ -165,7 +175,7 @@ let tx = await Mina.transaction(feePayer, () => {
 });
 await tx.sign([feePayerKey, zkappKey]).send();
 
-console.log('\nCommitment check via - VendorCredentialZkApp.commitment.get()');
+console.log('\nCommitment check via VendorCredentialZkApp.commitment.get()');
 console.log(VendorCredentialZkApp.commitment.get().toString());
 
 let verifyAddress = new Record(CircuitString.fromString('1234 Main St'));
@@ -184,7 +194,7 @@ await verifierRequest(0n, verifyAddress);
 console.log('\nRequest to verify SSN');
 await verifierRequest(1n, verifySSN);
 
-console.log('\nCommitment check via - VendorCredentialZkApp.commitment.get()');
+console.log('\nCommitment check via VendorCredentialZkApp.commitment.get()');
 console.log(VendorCredentialZkApp.commitment.get().toString());
 
 // Request to verify VC01...
@@ -196,7 +206,7 @@ await verifierRequest(3n, verifyVC02);
 
 // Testing a request to verify Address (with incorrect data)...
 console.log(
-  '\nTesting a request to verify address with incorrect data. Credential verification should fail.'
+  '\nTesting a request to verify the address with incorrect data. Credential verification should fail.'
 );
 // The correct address should be 1234 Main St.
 let verifyAddressFailTest = new Record(
@@ -205,11 +215,11 @@ let verifyAddressFailTest = new Record(
 await verifierRequest(0n, verifyAddressFailTest);
 
 // Updating a record
-console.log('\nUpdating a record - Covid-19 Vaccine - Completed');
+console.log('\nUpdating a record - Covid-19 Vaccine');
 let updateCircuitString = CircuitString.fromString('Revised to Completed');
 await updateRequest('VC01', updateCircuitString, 2n);
 
-console.log('\nCommitment check via - VendorCredentialZkApp.commitment.get()');
+console.log('\nCommitment check via VendorCredentialZkApp.commitment.get()');
 console.log(VendorCredentialZkApp.commitment.get().toString());
 
 // Verify record changed
@@ -219,6 +229,7 @@ let verifyVC01Updated = new Record(
     CircuitString.fromString('Revised to Completed')
   )
 );
+
 await verifierRequest(2n, verifyVC01Updated);
 
 async function verifierRequest(index: bigint, credentialData: Record) {
@@ -276,6 +287,7 @@ async function updateRequest(
   }
 }
 
+console.log('\nEnd Demo\n');
 console.log('Shutting down');
 
 await shutdown();
