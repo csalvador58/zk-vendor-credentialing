@@ -238,7 +238,7 @@ async function verifierRequest(index: bigint, credentialData: Record) {
   // Create a circuit-compatible witness
   let witness = new MyMerkleWitness(w);
 
-  console.log('Verifier request in process...');
+  console.log('Verifier request in progress...');
   try {
     // Create transaction to
     let tx = await Mina.transaction(feePayer, () => {
@@ -266,7 +266,7 @@ async function updateRequest(
   // Create a circuit-compatible witness
   let witness = new MyMerkleWitness(w);
 
-  console.log('Record update request in process...');
+  console.log('Record update request in progress...');
   try {
     let tx = await Mina.transaction(feePayer, () => {
       VendorCredentialZkApp.updateRecord(record, updateCircuitString, witness);
