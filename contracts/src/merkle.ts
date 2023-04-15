@@ -18,6 +18,7 @@ import {
   AccountUpdate,
   MerkleTree,
   MerkleWitness,
+  shutdown,
 } from 'snarkyjs';
 
 await isReady;
@@ -44,16 +45,13 @@ class Account extends CircuitValue {
     return new Account(this.publicKey, this.points.add(n));
   }
 }
-// we need the initiate tree root in order to tell the contract about our off-chain storage
+// initiate tree root in order to tell the contract about our off-chain storage
 let initialCommitment: Field = Field(0);
 /*
-    We want to write a smart contract that serves as a leaderboard,
-    but only has the commitment of the off-chain storage stored in an on-chain variable.
-    The accounts of all participants will be stored off-chain!
-    If a participant can guess the preimage of a hash, they will be granted one point :)
-  */
+      A smart contract that confirms a vendor's credentials.
+    */
 
-class Leaderboard extends SmartContract {
+class VendorCredential extends SmartContract {
   // a commitment is a cryptographic primitive that allows us to commit to data, with the ability to "reveal" it later
   @state(Field) commitment = State<Field>();
 
@@ -67,28 +65,33 @@ class Leaderboard extends SmartContract {
   }
 
   @method
-  guessPreimage(guess: Field, account: Account, path: MyMerkleWitness) {
+  verifyCredential(
+    credentialStatus: Field,
+    account: Account,
+    path: MyMerkleWitness
+  ) {
     // this is our hash! its the hash of the preimage "22", but keep it a secret!
     let target = Field(
       '17057234437185175411792943285768571642343179330449434169483610110583519635705'
     );
-    // if our guess preimage hashes to our target, we won a point!
-    Poseidon.hash([guess]).assertEquals(target);
 
-    // we fetch the on-chain commitment
-    let commitment = this.commitment.get();
-    this.commitment.assertEquals(commitment);
+    // if our credentialStatus preimage hashes to our target, credential is verified!
+    Poseidon.hash([credentialStatus]).assertEquals(target);
 
-    // we check that the account is within the committed Merkle Tree
-    path.calculateRoot(account.hash()).assertEquals(commitment);
+    // // we fetch the on-chain commitment
+    // let commitment = this.commitment.get();
+    // this.commitment.assertEquals(commitment);
 
-    // we update the account and grant one point!
-    let newAccount = account.addPoints(1);
+    // // we check that the account is within the committed Merkle Tree
+    // path.calculateRoot(account.hash()).assertEquals(commitment);
 
-    // we calculate the new Merkle Root, based on the account changes
-    let newCommitment = path.calculateRoot(newAccount.hash());
+    // // we update the account and grant one point!
+    // let newAccount = account.addPoints(1);
 
-    this.commitment.set(newCommitment);
+    // // we calculate the new Merkle Root, based on the account changes
+    // let newCommitment = path.calculateRoot(newAccount.hash());
+
+    // this.commitment.set(newCommitment);
   }
 }
 
@@ -130,40 +133,62 @@ Tree.setLeaf(3n, olivia.hash());
 // now that we got our accounts set up, we need the commitment to deploy our contract!
 initialCommitment = Tree.getRoot();
 
-let leaderboardZkApp = new Leaderboard(zkappAddress);
-console.log('Deploying leaderboard..');
+let VendorCredentialZkApp = new VendorCredential(zkappAddress);
+console.log('Deploying VendorCredential..');
 if (doProofs) {
-  await Leaderboard.compile();
+  await VendorCredential.compile();
 }
 let tx = await Mina.transaction(feePayer, () => {
   AccountUpdate.fundNewAccount(feePayer).send({
     to: zkappAddress,
     amount: initialBalance,
   });
-  leaderboardZkApp.deploy();
+  VendorCredentialZkApp.deploy();
 });
 await tx.sign([feePayerKey, zkappKey]).send();
 
-console.log('Initial points: ' + Accounts.get('Bob')?.points);
+// console.log('Initial points: ' + Accounts.get('Bob')?.points);
 
-console.log('Making guess..');
-await makeGuess('Bob', 0n, 22);
+console.log('Verifier checking a credential..');
+await verifierRequest('Bob', 0n, 21);
 
-console.log('Final points: ' + Accounts.get('Bob')?.points);
+// console.log('Final points: ' + Accounts.get('Bob')?.points);
 
-async function makeGuess(name: Names, index: bigint, guess: number) {
+async function verifierRequest(
+  name: Names,
+  index: bigint,
+  credentialStatus: number
+) {
   let account = Accounts.get(name)!;
   let w = Tree.getWitness(index);
   let witness = new MyMerkleWitness(w);
 
-  let tx = await Mina.transaction(feePayer, () => {
-    leaderboardZkApp.guessPreimage(Field(guess), account, witness);
-  });
-  await tx.prove();
-  await tx.sign([feePayerKey, zkappKey]).send();
+  console.log('Verifier request in process...');
+  try {
+    let tx = await Mina.transaction(feePayer, () => {
+      VendorCredentialZkApp.verifyCredential(
+        Field(credentialStatus),
+        account,
+        witness
+      );
+    });
+    await tx.prove();
+    await tx.sign([feePayerKey, zkappKey]).send();
 
-  // if the transaction was successful, we can update our off-chain storage as well
-  account.points = account.points.add(1);
-  Tree.setLeaf(index, account.hash());
-  leaderboardZkApp.commitment.get().assertEquals(Tree.getRoot());
+    console.log('Credentials verified!');
+  } catch (ex: any) {
+    console.log('Vendor credential not verified: ');
+    console.log('*********************PRIVATE MESSAGE*********************');
+    console.log(ex.message);
+    console.log('*********************************************************');
+  }
+
+  //   // if the transaction was successful, we can update our off-chain storage as well
+  //   account.points = account.points.add(1);
+  //   Tree.setLeaf(index, account.hash());
+  //   VendorCredentialZkApp.commitment.get().assertEquals(Tree.getRoot());
 }
+
+console.log('Shutting down');
+
+await shutdown();
