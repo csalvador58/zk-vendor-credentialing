@@ -232,6 +232,13 @@ let verifyVC01Updated = new Record(
 
 await verifierRequest(2n, verifyVC01Updated);
 
+// Request to verify Address...
+console.log('\nRequest to verify address');
+await verifierRequest(0n, verifyAddress);
+
+console.log('\nCommitment check via VendorCredentialZkApp.commitment.get()');
+console.log(VendorCredentialZkApp.commitment.get().toString());
+
 async function verifierRequest(index: bigint, credentialData: Record) {
   // Generate witness for leaf at an index
   let w = Tree.getWitness(index);
@@ -275,11 +282,11 @@ async function updateRequest(
     await tx.sign([feePayerKey, zkappKey]).send();
 
     console.log('Update to record completed.');
-
     // if the transaction was successful, we can update our off-chain storage
     record.status = record.status.append(updateCircuitString);
-    Tree.setLeaf(index, updateCircuitString.hash());
+    Tree.setLeaf(index, record.hash());
     VendorCredentialZkApp.commitment.get().assertEquals(Tree.getRoot());
+    console.log('Off-chain storage updated.');
   } catch (ex: any) {
     // console.log('error: ');
     // console.log(ex);
